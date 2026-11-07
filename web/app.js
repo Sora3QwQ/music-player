@@ -35,7 +35,11 @@ function renderTracks() {
   const query = el('search').value.toLowerCase().trim();
   const list = el('tracks');
   list.replaceChildren();
-  for (const track of tracks.filter(t => (t.title + ' ' + t.artist).toLowerCase().includes(query)).slice(0, 200)) {
+  const results = tracks.filter(t => (t.title + ' ' + t.artist).toLowerCase().includes(query));
+  el('track-count').textContent = results.length > 200 ? '显示 200 / ' + results.length + ' 首' : results.length + ' 首';
+  el('library-empty').hidden = results.length > 0;
+  el('library-empty').textContent = query ? '没有匹配的歌曲' : '等待安卓播放机同步曲库';
+  for (const track of results.slice(0, 200)) {
     const row = document.createElement('li');
     const button = document.createElement('button');
     button.textContent = track.artist ? track.title + ' · ' + track.artist : track.title;
@@ -66,6 +70,7 @@ async function poll() {
       renderTracks();
     }
     const queue = (state.queue || []).map(id => tracks.find(t => t.id === id)?.title || '未知曲目');
+    el('queue-empty').hidden = queue.length > 0;
     const queueKey = JSON.stringify(queue);
     if (queueKey !== shownQueue) {
       shownQueue = queueKey;
@@ -76,6 +81,7 @@ async function poll() {
       }));
     }
     el('online').textContent = online ? (state.playing ? '● 播放中' : '● 待命中') : '○ 离线';
+    el('online').dataset.online = String(online);
     el('track').textContent = tracks.find(t => t.id === state.id)?.title || '等待点歌';
     for (const button of document.querySelectorAll('[data-action]')) button.disabled = !online;
     for (const id of ['seek','volume']) el(id).disabled = !online;

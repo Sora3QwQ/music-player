@@ -5,10 +5,18 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
@@ -29,13 +37,19 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public final class MainActivity extends Activity {
+    private static final int BACKGROUND = 0xff101b17;
+    private static final int SURFACE = 0xff182722;
+    private static final int LINE = 0xff354940;
+    private static final int TEXT = 0xfff4f8f5;
+    private static final int MUTED = 0xffafc2b7;
+    private static final int MINT = 0xffb2f1cc;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final OkHttpClient http = new OkHttpClient.Builder().followRedirects(false)
             .callTimeout(10, TimeUnit.SECONDS).build();
     private SharedPreferences prefs;
     private EditText address, code;
     private TextView status;
-    private Button start, pairing;
+    private Button pairing;
     private List<Library.Song> songs = Collections.emptyList();
     private ArrayAdapter<String> adapter;
     private int scanGeneration;
@@ -43,43 +57,155 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         prefs = getSharedPreferences("settings", MODE_PRIVATE);
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        int padding = (int) (16 * getResources().getDisplayMetrics().density);
-        layout.setPadding(padding,padding,padding,padding);
-        setContentView(layout);
-        status = new TextView(this);
-        layout.addView(status);
-        address = new EditText(this);
-        address.setSingleLine(true);
-        address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        address.setHint("https://music.example.com");
-        address.setText(prefs.getString("origin",""));
-        layout.addView(address);
-        code = new EditText(this);
-        code.setSingleLine(true);
-        code.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        code.setHint("网页一次性配对码");
-        layout.addView(code);
-        pairing = button(layout,"配对", this::pair);
-        button(layout,"选择音乐目录", () -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1));
-        button(layout,"重新扫描", this::scan);
-        start = button(layout,"开启远程待命（仅 Wi-Fi）", this::startRemote);
-        button(layout,"关闭远程待命", () -> action("stopRemote", null));
-        button(layout,"暂停 / 继续", () -> action("toggle", null));
         ListView list = new ListView(this);
-        adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1);
+        list.setBackgroundColor(BACKGROUND);
+        list.setDivider(null);
+        list.setHeaderDividersEnabled(false);
+        list.setItemsCanFocus(true);
+        list.setOnApplyWindowInsetsListener((view, insets) -> {
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars()
+                        | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+                view.setPadding(safe.left + dp(16), safe.top + dp(12), safe.right + dp(16), safe.bottom + dp(12));
+            } else {
+                view.setPadding(dp(16), dp(12), dp(16), dp(12));
+            }
+            return insets;
+        });
+        setContentView(list);
+
+        LinearLayout header = column();
+        TextView title = label("♫   远程音乐", 29, TEXT, true);
+        header.addView(title);
+        TextView subtitle = label("本地曲库 · 网页遥控", 14, MUTED, false);
+        add(header, subtitle, 3);
+
+        LinearLayout standby = panel(header, "REMOTE CONTROL", "远程待命");
+        status = label("请选择音乐目录", 14, MUTED, false);
+        status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        add(standby, status, 6);
+        add(standby, button("开启待命 · 仅 Wi-Fi", true, this::startRemote), 12);
+        add(standby, button("关闭待命", false, () -> action("stopRemote", null)), 6);
+
+        LinearLayout device = panel(header, "DEVICE", "连接到网页");
+        LinearLayout fields = column();
+        boolean paired = prefs.contains("token");
+        fields.setVisibility(paired ? View.GONE : View.VISIBLE);
+        Button settings = button(paired ? "展开配对设置" : "收起配对设置", false, () -> {});
+        settings.setOnClickListener(view -> {
+            boolean open = fields.getVisibility() == View.VISIBLE;
+            fields.setVisibility(open ? View.GONE : View.VISIBLE);
+            settings.setText(open ? "展开配对设置" : "收起配对设置");
+        });
+        add(device, settings, 8);
+        add(device, fields, 0);
+        address = field("https://music.example.com", InputType.TYPE_TEXT_VARIATION_URI);
+        address.setText(prefs.getString("origin",""));
+        add(fields, address, 8);
+        code = field("网页一次性配对码", InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        add(fields, code, 8);
+        pairing = button("配对设备", true, this::pair);
+        add(fields, pairing, 8);
+
+        LinearLayout library = panel(header, "LIBRARY", "本地曲库");
+        LinearLayout tools = new LinearLayout(this);
+        tools.addView(button("选择目录", false,
+                () -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1)),
+                new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout.LayoutParams scanParams = new LinearLayout.LayoutParams(0, -2, 1);
+        scanParams.leftMargin = dp(8);
+        tools.addView(button("重新扫描", false, this::scan), scanParams);
+        add(library, tools, 8);
+        add(library, button("暂停 / 继续", false, () -> action("toggle", null)), 8);
+        add(header, label("点按曲目即可播放", 13, MUTED, false), 12);
+        list.addHeaderView(header, null, false);
+        adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1) {
+            @Override public View getView(int position, View recycled, ViewGroup parent) {
+                TextView row = recycled instanceof TextView ? (TextView) recycled : label("", 16, TEXT, false);
+                row.setText(getItem(position));
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setMinHeight(dp(52));
+                row.setPadding(dp(12), dp(8), dp(12), dp(8));
+                return row;
+            }
+        };
         list.setAdapter(adapter);
-        list.setOnItemClickListener((parent, view, index, id) -> action("track", songs.get(index).id));
-        layout.addView(list, new LinearLayout.LayoutParams(-1,0,1));
+        list.setOnItemClickListener((parent, view, index, id) -> {
+            int song = index - list.getHeaderViewsCount();
+            if (song >= 0 && song < songs.size()) action("track", songs.get(song).id);
+        });
         scan();
     }
 
-    private Button button(LinearLayout layout, String label, Runnable run) {
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private LinearLayout column() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        return layout;
+    }
+
+    private void add(LinearLayout layout, View child, int gap) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.topMargin = dp(gap);
+        layout.addView(child, params);
+    }
+
+    private GradientDrawable shape(int fill, int border, int radius) {
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(fill);
+        background.setCornerRadius(dp(radius));
+        background.setStroke(dp(1), border);
+        return background;
+    }
+
+    private TextView label(String text, int size, int color, boolean bold) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextColor(color);
+        view.setTextSize(size);
+        if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return view;
+    }
+
+    private LinearLayout panel(LinearLayout parent, String category, String title) {
+        LinearLayout panel = column();
+        panel.setBackground(shape(SURFACE, LINE, 20));
+        panel.setPadding(dp(15), dp(13), dp(15), dp(13));
+        TextView eyebrow = label(category, 11, MINT, true);
+        eyebrow.setLetterSpacing(0.13f);
+        panel.addView(eyebrow);
+        add(panel, label(title, 20, TEXT, true), 2);
+        add(parent, panel, 12);
+        return panel;
+    }
+
+    private EditText field(String hint, int variation) {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | variation);
+        input.setHint(hint);
+        input.setTextColor(TEXT);
+        input.setHintTextColor(MUTED);
+        input.setBackground(shape(BACKGROUND, LINE, 12));
+        input.setMinHeight(dp(48));
+        input.setPadding(dp(12), dp(8), dp(12), dp(8));
+        return input;
+    }
+
+    private Button button(String label, boolean primary, Runnable run) {
         Button button = new Button(this);
         button.setText(label);
+        button.setAllCaps(false);
+        button.setMinHeight(dp(46));
+        button.setTextColor(primary ? BACKGROUND : TEXT);
+        int fill = primary ? MINT : 0xff20332a;
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x3090b29e),
+                shape(fill, primary ? MINT : LINE, 12), null));
+        button.setPadding(dp(10), dp(5), dp(10), dp(5));
         button.setOnClickListener(view -> run.run());
-        layout.addView(button);
         return button;
     }
 
