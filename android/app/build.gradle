@@ -1,0 +1,28 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.sora.music'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.sora.music'
+        minSdk 28
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+    }
+    signingConfigs {
+        ci {
+            if (System.getenv('APK_KEYSTORE')) {
+                storeFile file(System.getenv('APK_KEYSTORE'))
+                storePassword System.getenv('APK_STORE_PASSWORD')
+                keyAlias System.getenv('APK_KEY_ALIAS')
+                keyPassword System.getenv('APK_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (System.getenv('APK_KEYSTORE')) signingConfig signingConfigs.ci
+        }
+    }
+}
+dependencies { implementation 'com.squareup.okhttp3:okhttp:4.12.0' }

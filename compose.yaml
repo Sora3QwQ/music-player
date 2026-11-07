@@ -1,0 +1,28 @@
+services:
+  app:
+    image: ${MUSIC_IMAGE:-ghcr.io/sora3qwq/music-player:main}
+    environment:
+      PUBLIC_ORIGIN: https://${MUSIC_DOMAIN:?set MUSIC_DOMAIN}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
+    volumes:
+      - music-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      MUSIC_DOMAIN: ${MUSIC_DOMAIN:?set MUSIC_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+volumes:
+  music-data:
+  caddy-data:
+  caddy-config:
