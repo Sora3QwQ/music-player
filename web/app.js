@@ -1,6 +1,7 @@
 'use strict';
 const el = id => document.getElementById(id);
 let tracks = [], pending = null, timer = null, online = false, polling = false;
+let catalogVersion = null, shownQueue = '';
 const notice = message => { el('notice').textContent = message; };
 async function api(path, body) {
   const options = body === undefined ? {} : {
@@ -20,6 +21,9 @@ function view(loggedIn) {
   timer = loggedIn ? setInterval(poll, 1500) : null;
   if (!loggedIn) {
     tracks = [];
+    catalogVersion = null;
+    shownQueue = '';
+    el('queue').replaceChildren();
     pending = null;
     renderTracks();
     el('track').textContent = '等待点歌';
@@ -37,7 +41,13 @@ function renderTracks() {
     button.textContent = track.artist ? track.title + ' · ' + track.artist : track.title;
     button.disabled = !online;
     button.onclick = () => command('track', track.id);
-    row.append(button);
+    const enqueue = document.createElement('button');
+    enqueue.textContent = '加入队列';
+    enqueue.setAttribute('aria-label', '将 ' + track.title + ' 加入队列');
+    enqueue.disabled = !online;
+    enqueue.onclick = () => command('enqueue', track.id);
+    row.className = 'track-row';
+    row.append(button, enqueue);
     list.append(row);
   }
 }
@@ -45,13 +55,25 @@ async function poll() {
   if (polling || el('player').hidden) return;
   polling = true;
   try {
-    const {online: connected, state} = await api('status');
-    const library = await api('tracks') || [];
+    const {online: connected, state, catalogVersion: version} = await api('status');
+    const changed = version !== catalogVersion;
+    const library = changed ? await api('tracks') || [] : tracks;
     if (el('player').hidden) return;
-    if (connected !== online || JSON.stringify(library) !== JSON.stringify(tracks)) {
+    if (connected !== online || changed) {
       online = connected;
       tracks = library;
+      catalogVersion = version;
       renderTracks();
+    }
+    const queue = (state.queue || []).map(id => tracks.find(t => t.id === id)?.title || '未知曲目');
+    const queueKey = JSON.stringify(queue);
+    if (queueKey !== shownQueue) {
+      shownQueue = queueKey;
+      el('queue').replaceChildren(...queue.map(title => {
+        const row = document.createElement('li');
+        row.textContent = title;
+        return row;
+      }));
     }
     el('online').textContent = online ? (state.playing ? '● 播放中' : '● 待命中') : '○ 离线';
     el('track').textContent = tracks.find(t => t.id === state.id)?.title || '等待点歌';

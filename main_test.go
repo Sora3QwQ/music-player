@@ -99,6 +99,19 @@ func TestRemoteLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait("/api/status", received.Request)
+	if err := json.Unmarshal(call("POST", "/api/command", `{"action":"enqueue","id":"`+id+`"}`, s.origin, 200), &queued); err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.ReadJSON(&received); err != nil {
+		t.Fatal(err)
+	}
+	if received.Action != "enqueue" || received.Request != queued["request"] {
+		t.Fatalf("invalid queue command: %+v", received)
+	}
+	if err := ws.WriteJSON(map[string]any{"type": "state", "state": State{Queue: []string{id}, Ack: received.Request}}); err != nil {
+		t.Fatal(err)
+	}
+	wait("/api/status", `"queue":["`+id+`"]`)
 	call("POST", "/api/revoke", "{}", s.origin, 200)
 	wait("/api/status", `"online":false`)
 	if _, res, err := dialer.Dial(address, header); err == nil || res == nil || res.StatusCode != 401 {

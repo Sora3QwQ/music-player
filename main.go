@@ -30,13 +30,14 @@ type Track struct {
 	Artist string `json:"artist"`
 }
 type State struct {
-	ID       string `json:"id"`
-	Playing  bool   `json:"playing"`
-	Position int64  `json:"position"`
-	Duration int64  `json:"duration"`
-	Volume   int    `json:"volume"`
-	Error    string `json:"error,omitempty"`
-	Ack      string `json:"ack,omitempty"`
+	Queue    []string `json:"queue"`
+	ID       string   `json:"id"`
+	Playing  bool     `json:"playing"`
+	Position int64    `json:"position"`
+	Duration int64    `json:"duration"`
+	Volume   int      `json:"volume"`
+	Error    string   `json:"error,omitempty"`
+	Ack      string   `json:"ack,omitempty"`
 }
 type saved struct {
 	Token  string
@@ -57,6 +58,7 @@ type server struct {
 	pair                   string
 	pairUntil              time.Time
 	disk                   saved
+	catalogVersion         uint64
 	device                 *websocket.Conn
 	state                  State
 }
@@ -93,6 +95,7 @@ func (s *server) persist(data saved) error {
 		return err
 	}
 	s.disk = data
+	s.catalogVersion++
 	return nil
 }
 
@@ -222,7 +225,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.disconnect()
 		reply(w, true)
 	case "GET /api/status":
-		reply(w, map[string]any{"online": s.device != nil, "state": s.state})
+		reply(w, map[string]any{"online": s.device != nil, "state": s.state, "catalogVersion": s.catalogVersion})
 	case "GET /api/tracks":
 		reply(w, s.disk.Tracks)
 	case "POST /api/command":
@@ -231,7 +234,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch cmd.Action {
-		case "track":
+		case "track", "enqueue":
 			found := false
 			for _, track := range s.disk.Tracks {
 				if track.ID == cmd.ID {
@@ -243,7 +246,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "unknown track", 400)
 				return
 			}
-		case "play", "pause", "next", "previous":
+		case "play", "pause", "next", "previous", "clearQueue":
 		case "volume":
 			if cmd.Value < 0 || cmd.Value > 100 {
 				http.Error(w, "invalid volume", 400)
@@ -311,6 +314,12 @@ func (s *server) socket(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	ws.SetReadLimit(8 << 20)
+	ws.SetPingHandler(func(payload string) error {
+		if err := ws.SetReadDeadline(time.Now().Add(80 * time.Second)); err != nil {
+			return err
+		}
+		return ws.WriteControl(websocket.PongMessage, []byte(payload), time.Now().Add(2*time.Second))
+	})
 	for {
 		_ = ws.SetReadDeadline(time.Now().Add(80 * time.Second))
 		var event struct {
@@ -329,6 +338,10 @@ func (s *server) socket(w http.ResponseWriter, r *http.Request) {
 		switch event.Type {
 		case "heartbeat":
 		case "state":
+			if len(event.State.Queue) > 100 || len(event.State.Error) > 1024 {
+				s.mu.Unlock()
+				return
+			}
 			s.state = event.State
 		case "catalog":
 			if len(event.Tracks) > 10000 {

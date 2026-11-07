@@ -31,7 +31,9 @@ import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 import org.json.JSONException;
+import org.json.JSONArray;
 import org.json.JSONObject;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -45,6 +47,7 @@ public final class PlayerService extends Service {
     private final AudioAttributes audio = new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build();
     private List<Library.Song> songs = Collections.emptyList();
+    private final ArrayDeque<String> queue = new ArrayDeque<>();
     private Library.Song selected;
     private MediaPlayer player;
     private MediaSession session;
@@ -62,16 +65,6 @@ public final class PlayerService extends Service {
     private String ack = "", preparingAck = "", error = "";
 
     private final Runnable reconnect = this::connect;
-    private final Runnable heartbeat = new Runnable() {
-        @Override public void run() {
-            if (!remote) return;
-            if (online) {
-                try { send(new JSONObject().put("type","heartbeat")); }
-                catch (JSONException impossible) { throw new AssertionError(impossible); }
-            }
-            main.postDelayed(this,30000);
-        }
-    };
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (online && playing) publish();
@@ -127,7 +120,6 @@ public final class PlayerService extends Service {
                         .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(),networks);
                 useWifi(findWifi());
-                main.post(heartbeat);
             }
         } else if ("stopRemote".equals(action)) {
             stopRemote();
@@ -225,7 +217,6 @@ public final class PlayerService extends Service {
     private void stopRemote() {
         if (!remote) return;
         remote = false;
-        main.removeCallbacks(heartbeat);
         connectivity.unregisterNetworkCallback(networks);
         closeSocket();
         wifi = null;
@@ -244,7 +235,9 @@ public final class PlayerService extends Service {
                     scanning = false;
                     ready = true;
                     songs = found;
+                    queue.removeIf(id -> findSong(id) == null);
                     publishCatalog();
+                    publish();
                     if (autoPlay != null) choose(autoPlay,"");
                     else if (!remote && !playing && !preparing && player == null) stopSelf();
                 });
@@ -253,6 +246,7 @@ public final class PlayerService extends Service {
                     if (destroyed || generation != scanGeneration) return;
                     scanning = false;
                     songs = Collections.emptyList();
+                    queue.clear();
                     ready = true;
                     publishCatalog();
                     finish("", "曲库读取失败，请重新授权目录");
@@ -280,6 +274,19 @@ public final class PlayerService extends Service {
             if (remaining <= 0 || remaining > 30000) { finish(request,"指令已过期，请检查设备时间"); return; }
             switch (cmd.getString("action")) {
                 case "track": choose(cmd.getString("id"),request); break;
+                case "enqueue":
+                    String id = cmd.getString("id");
+                    if (queue.size() >= 100 || findSong(id) == null) {
+                        finish(request,"曲库中无此曲目或队列已满");
+                    } else {
+                        queue.addLast(id);
+                        finish(request,"");
+                    }
+                    break;
+                case "clearQueue":
+                    queue.clear();
+                    finish(request,"");
+                    break;
                 case "play": play(request); break;
                 case "pause": pause(request); break;
                 case "next": skip(1,request); break;
@@ -296,14 +303,21 @@ public final class PlayerService extends Service {
         } catch (JSONException ignored) { }
     }
 
-    private void choose(String id,String request) {
+    private Library.Song findSong(String id) {
         for (Library.Song song : songs) {
-            if (song.id.equals(id)) { load(song,request); return; }
+            if (song.id.equals(id)) return song;
         }
-        finish(request,"曲目不可用，请重新扫描");
+        return null;
+    }
+
+    private void choose(String id,String request) {
+        Library.Song song = findSong(id);
+        if (song == null) finish(request,"曲目不可用，请重新扫描");
+        else load(song,request);
     }
 
     private void skip(int delta,String request) {
+        if (delta > 0 && !queue.isEmpty()) { choose(queue.removeFirst(),request); return; }
         if (songs.isEmpty()) { finish(request,"曲库为空"); return; }
         int index = -1;
         for (int i = 0; i < songs.size(); i++) {
@@ -335,7 +349,7 @@ public final class PlayerService extends Service {
             player.setOnCompletionListener(current -> {
                 if (player == current) {
                     playing = false;
-                    if (songs.size() > 1) skip(1,"");
+                    if (!queue.isEmpty() || songs.size() > 1) skip(1,"");
                     else pause("");
                 }
             });
@@ -435,7 +449,7 @@ public final class PlayerService extends Service {
         try {
             JSONObject state = new JSONObject().put("id",selected == null ? "" : selected.id)
                     .put("playing",playing).put("position",position).put("duration",duration)
-                    .put("volume",volume).put("ack",ack).put("error",error);
+                    .put("volume",volume).put("ack",ack).put("error",error).put("queue",new JSONArray(queue));
             send(new JSONObject().put("type","state").put("state",state));
         } catch (JSONException impossible) { throw new AssertionError(impossible); }
     }

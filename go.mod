@@ -1,5 +1,5 @@
 module github.com/Sora3QwQ/music-player
 
-go 1.25.4
+go 1.26.10
 
 require github.com/gorilla/websocket v1.5.3

@@ -11,5 +11,6 @@
 <div class="bar controls"><button data-action="previous">上一首</button><button data-action="play">播放</button><button data-action="pause">暂停</button><button data-action="next">下一首</button></div>
 <label>音量 <input id="volume" type="range" min="0" max="100" value="100"></label></section>
 <section><div class="bar"><h2>本地曲库</h2><input id="search" type="search" placeholder="搜索歌曲或歌手" aria-label="搜索歌曲或歌手"></div><ul id="tracks"></ul></section>
+<section><div class="bar"><h2>接下来播放</h2><button id="clear-queue" data-action="clearQueue">清空队列</button></div><ol id="queue"></ol></section>
 <section><div class="bar"><h2>设备管理</h2><button id="pair">生成配对码</button><button id="revoke">解绑</button></div><input id="code" readonly hidden aria-label="配对码"></section>
 </div></main></body></html>
