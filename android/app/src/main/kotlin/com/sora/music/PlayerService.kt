@@ -21,6 +21,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.Uri
 import android.os.Build
+import android.os.Binder
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -34,7 +35,6 @@ import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
-import java.util.ArrayDeque
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -44,7 +44,16 @@ class PlayerService : Service() {
     private val audio = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
     private var songs = emptyList<Library.Song>()
-    private val queue = ArrayDeque<String>()
+    private lateinit var playlists: Playlists
+    private val observers = mutableSetOf<(JSONObject) -> Unit>()
+    internal inner class LocalBinder : Binder() {
+        fun observe(listener: (JSONObject) -> Unit) {
+            observers.add(listener)
+            publish()
+        }
+        fun remove(listener: (JSONObject) -> Unit) { observers.remove(listener) }
+    }
+    private val localBinder = LocalBinder()
     private var selected: Library.Song? = null
     private var player: MediaPlayer? = null
     private lateinit var session: MediaSession
@@ -74,7 +83,7 @@ class PlayerService : Service() {
     private val reconnect = Runnable { connect() }
     private val tick = object : Runnable {
         override fun run() {
-            if (online && playing) publish()
+            if (playing) publish()
             if (playing) main.postDelayed(this, 5000)
         }
     }
@@ -91,6 +100,7 @@ class PlayerService : Service() {
     override fun onCreate() {
         super.onCreate()
         prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        playlists = Playlists(prefs)
         volume = prefs.getInt("volume", 100)
         connectivity = checkNotNull(getSystemService(ConnectivityManager::class.java))
         audioManager = checkNotNull(getSystemService(AudioManager::class.java))
@@ -137,9 +147,26 @@ class PlayerService : Service() {
                 updateNotification()
                 if (!playing && !preparing) stopSelf()
             }
-            "track" -> intent.getStringExtra("id")?.let { id ->
-                if (scanning) scan(id) else choose(id, "")
+            "track" -> intent.getStringExtra("id")?.let { choose(it, "") }
+            "enqueue" -> intent.getStringExtra("id")?.let { addToPlaylist(it, "") }
+            "removeTrack" -> intent.getStringExtra("id")?.let { id ->
+                if (playlists.active.tracks.remove(id)) {
+                    playlists.save()
+                    if (id == selected?.id) resetPlayback()
+                }
+                finish("", "")
             }
+            "createPlaylist" -> {
+                if (playlists.create(intent.getStringExtra("id").orEmpty())) {
+                    resetPlayback()
+                    finish("", "")
+                } else finish("", "歌单名称需为 1–40 个字符，最多创建 20 个歌单")
+            }
+            "selectPlaylist" -> selectPlaylist(intent.getStringExtra("id").orEmpty(), "")
+            "next" -> skip(1, "")
+            "previous" -> skip(-1, "")
+            "seek" -> seek(intent.getLongExtra("position", 0), "")
+            "repeat" -> cycleRepeat("")
             "toggle" -> if (playing || preparing) pause("") else play("")
             "scan" -> scan()
         }
@@ -233,7 +260,7 @@ class PlayerService : Service() {
         if (wake.isHeld) wake.release()
     }
 
-    private fun scan(autoPlay: String? = null) {
+    private fun scan() {
         val tree = prefs.getString("tree", "").orEmpty()
         val generation = ++scanGeneration
         scanning = true
@@ -245,11 +272,9 @@ class PlayerService : Service() {
                     scanning = false
                     ready = true
                     songs = found
-                    queue.removeIf { findSong(it) == null }
                     publishCatalog()
                     publish()
-                    if (autoPlay != null) choose(autoPlay, "")
-                    else if (!remote && !playing && !preparing && player == null) stopSelf()
+                    if (!remote && !playing && !preparing && player == null) stopSelf()
                 }
             } catch (_: Exception) {
                 main.post {
@@ -257,7 +282,6 @@ class PlayerService : Service() {
                     scanning = false
                     ready = true
                     songs = emptyList()
-                    queue.clear()
                     publishCatalog()
                     finish("", "曲库读取失败，请重新授权目录")
                 }
@@ -285,19 +309,9 @@ class PlayerService : Service() {
             }
             when (cmd.getString("action")) {
                 "track" -> choose(cmd.getString("id"), request)
-                "enqueue" -> {
-                    val id = cmd.getString("id")
-                    if (queue.size >= 100 || findSong(id) == null) {
-                        finish(request, "曲库中无此曲目或队列已满")
-                    } else {
-                        queue.addLast(id)
-                        finish(request, "")
-                    }
-                }
-                "clearQueue" -> {
-                    queue.clear()
-                    finish(request, "")
-                }
+                "enqueue" -> addToPlaylist(cmd.getString("id"), request)
+                "selectPlaylist" -> selectPlaylist(cmd.getString("id"), request)
+                "repeat" -> cycleRepeat(request)
                 "play" -> play(request)
                 "pause" -> pause(request)
                 "next" -> skip(1, request)
@@ -318,22 +332,53 @@ class PlayerService : Service() {
 
     private fun findSong(id: String) = songs.firstOrNull { it.id == id }
 
-    private fun choose(id: String, request: String) {
-        val song = findSong(id)
-        if (song == null) finish(request, "曲目不可用，请重新扫描") else load(song, request)
+    private fun addToPlaylist(id: String, request: String) {
+        val tracks = playlists.active.tracks
+        if (id in tracks) {
+            finish(request, "歌曲已在当前歌单")
+        } else if (tracks.size >= 100 || findSong(id) == null) {
+            finish(request, "曲目不可用或歌单已满（最多 100 首）")
+        } else {
+            tracks.add(id)
+            playlists.save()
+            finish(request, "")
+        }
     }
 
-    private fun skip(delta: Int, request: String) {
-        if (delta > 0 && queue.isNotEmpty()) {
-            choose(queue.removeFirst(), request)
-            return
+    private fun selectPlaylist(id: String, request: String) {
+        if (id == playlists.active.id) finish(request, "")
+        else if (playlists.select(id)) {
+            resetPlayback()
+            finish(request, "")
+        } else finish(request, "歌单不存在")
+    }
+
+    private fun resetPlayback() {
+        releasePlayer()
+        selected = null
+        session.setMetadata(null)
+    }
+
+    private fun cycleRepeat(request: String) {
+        playlists.cycleRepeat()
+        finish(request, "")
+    }
+
+    private fun choose(id: String, request: String) {
+        val song = if (id in playlists.active.tracks) findSong(id) else null
+        if (song == null) finish(request, "曲目不在当前歌单或文件不可用") else load(song, request)
+    }
+
+    private fun skip(delta: Int, request: String, automatic: Boolean = false) {
+        val available = songs.mapTo(HashSet()) { it.id }
+        val tracks = playlists.active.tracks.filter { it in available }
+        val next = nextTrack(tracks, selected?.id, delta, playlists.repeat, automatic)
+        when {
+            next != null -> choose(next, request)
+            automatic -> pause("")
+            tracks.isEmpty() -> finish(request, "当前歌单没有可播放的歌曲")
+            else -> finish(request, "已到歌单边界")
         }
-        if (songs.isEmpty()) {
-            finish(request, "曲库为空")
-            return
-        }
-        val index = songs.indexOfFirst { it.id == selected?.id }
-        load(songs[if (index < 0) 0 else Math.floorMod(index + delta, songs.size)], request)
     }
 
     private fun load(song: Library.Song, request: String) {
@@ -364,7 +409,7 @@ class PlayerService : Service() {
             loading.setOnCompletionListener { current ->
                 if (player === current) {
                     playing = false
-                    if (queue.isNotEmpty() || songs.size > 1) skip(1, "") else pause("")
+                    skip(1, "", automatic = true)
                 }
             }
             loading.setOnErrorListener { current, _, _ ->
@@ -467,11 +512,14 @@ class PlayerService : Service() {
             session.setMetadata(MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, it.title)
                 .putLong(MediaMetadata.METADATA_KEY_DURATION, duration.toLong()).build())
         }
-        if (!online) return
+        val lists = JSONArray()
+        for (list in playlists.lists) lists.put(JSONObject().put("id", list.id).put("name", list.name))
         val state = JSONObject().put("id", selected?.id.orEmpty()).put("playing", playing)
             .put("position", position).put("duration", duration).put("volume", volume)
-            .put("ack", ack).put("error", error).put("queue", JSONArray(queue))
-        send(JSONObject().put("type", "state").put("state", state))
+            .put("ack", ack).put("error", error).put("queue", JSONArray(playlists.active.tracks))
+            .put("playlists", lists).put("playlist", playlists.active.id).put("repeat", playlists.repeat.name)
+        for (observer in observers.toList()) observer(state)
+        if (online) send(JSONObject().put("type", "state").put("state", state))
     }
 
     private fun updateNotification() {
@@ -503,7 +551,7 @@ class PlayerService : Service() {
         foreground = true
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(intent: Intent?): IBinder = localBinder
 
     override fun onDestroy() {
         destroyed = true

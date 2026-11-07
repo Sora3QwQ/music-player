@@ -29,7 +29,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - run: test -f "$ANDROID_HOME/platforms/android-35/android.jar"
-      - run: gradle --no-daemon -p android lintDebug assembleDebug
+      - run: gradle --no-daemon -p android testDebugUnitTest lintDebug assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: remote-music-debug-apk

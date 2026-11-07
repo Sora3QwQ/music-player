@@ -29,15 +29,23 @@ type Track struct {
 	Title  string `json:"title"`
 	Artist string `json:"artist"`
 }
+type PlaylistSummary struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type State struct {
-	Queue    []string `json:"queue"`
-	ID       string   `json:"id"`
-	Playing  bool     `json:"playing"`
-	Position int64    `json:"position"`
-	Duration int64    `json:"duration"`
-	Volume   int      `json:"volume"`
-	Error    string   `json:"error,omitempty"`
-	Ack      string   `json:"ack,omitempty"`
+	Queue     []string          `json:"queue"`
+	Playlists []PlaylistSummary `json:"playlists"`
+	Playlist  string            `json:"playlist"`
+	Repeat    string            `json:"repeat"`
+	ID        string            `json:"id"`
+	Playing   bool              `json:"playing"`
+	Position  int64             `json:"position"`
+	Duration  int64             `json:"duration"`
+	Volume    int               `json:"volume"`
+	Error     string            `json:"error,omitempty"`
+	Ack       string            `json:"ack,omitempty"`
 }
 type saved struct {
 	Token  string
@@ -246,7 +254,19 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "unknown track", 400)
 				return
 			}
-		case "play", "pause", "next", "previous", "clearQueue":
+		case "selectPlaylist":
+			found := false
+			for _, list := range s.state.Playlists {
+				if list.ID == cmd.ID {
+					found = true
+					break
+				}
+			}
+			if s.device != nil && !found {
+				http.Error(w, "unknown playlist", 400)
+				return
+			}
+		case "play", "pause", "next", "previous", "repeat", "clearQueue":
 		case "volume":
 			if cmd.Value < 0 || cmd.Value > 100 {
 				http.Error(w, "invalid volume", 400)
@@ -338,7 +358,7 @@ func (s *server) socket(w http.ResponseWriter, r *http.Request) {
 		switch event.Type {
 		case "heartbeat":
 		case "state":
-			if len(event.State.Queue) > 100 || len(event.State.Error) > 1024 {
+			if len(event.State.Queue) > 100 || len(event.State.Playlists) > 20 || len(event.State.Error) > 1024 {
 				s.mu.Unlock()
 				return
 			}

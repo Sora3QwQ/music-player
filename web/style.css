@@ -56,3 +56,10 @@ input[type=range] { margin: 0; width: 100%; min-width: 0; accent-color: var(--mi
 #queue:empty { margin: 0; }
 #queue li { margin: .3rem 0; }
 @media (max-width: 720px) { .dashboard { grid-template-columns: minmax(0, 1fr); } }
+.repeat { margin-top: 12px; }
+.repeat[data-active=true], #queue button[aria-current=true] { color: var(--mint); border-color: var(--mint); }
+.playlist-label { display: block; margin-top: 12px; color: var(--muted); font-size: .875rem; }
+#playlist { width: 100%; margin-top: 4px; padding: .55rem; border: 1px solid var(--line); border-radius: 12px; background: #101d17; color: inherit; font: inherit; }
+#queue button { width: 100%; text-align: left; overflow-wrap: anywhere; }
+#settings { grid-column: 1 / -1; }
+#settings summary { cursor: pointer; }

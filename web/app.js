@@ -1,7 +1,7 @@
 'use strict';
 const el = id => document.getElementById(id);
 let tracks = [], pending = null, timer = null, online = false, polling = false;
-let catalogVersion = null, shownQueue = '';
+let catalogVersion = null, shownQueue = '', shownPlaylists = '';
 const notice = message => { el('notice').textContent = message; };
 async function api(path, body) {
   const options = body === undefined ? {} : {
@@ -23,37 +23,50 @@ function view(loggedIn) {
     tracks = [];
     catalogVersion = null;
     shownQueue = '';
+    shownPlaylists = '';
     el('queue').replaceChildren();
+    el('playlist').replaceChildren();
+    el('settings').open = false;
     pending = null;
-    renderTracks();
     el('track').textContent = '等待点歌';
     el('code').value = '';
     el('code').hidden = true;
   }
 }
-function renderTracks() {
-  const query = el('search').value.toLowerCase().trim();
-  const list = el('tracks');
-  list.replaceChildren();
-  const results = tracks.filter(t => (t.title + ' ' + t.artist).toLowerCase().includes(query));
-  el('track-count').textContent = results.length > 200 ? '显示 200 / ' + results.length + ' 首' : results.length + ' 首';
-  el('library-empty').hidden = results.length > 0;
-  el('library-empty').textContent = query ? '没有匹配的歌曲' : '等待安卓播放机同步曲库';
-  for (const track of results.slice(0, 200)) {
-    const row = document.createElement('li');
-    const button = document.createElement('button');
-    button.textContent = track.artist ? track.title + ' · ' + track.artist : track.title;
-    button.disabled = !online;
-    button.onclick = () => command('track', track.id);
-    const enqueue = document.createElement('button');
-    enqueue.textContent = '加入队列';
-    enqueue.setAttribute('aria-label', '将 ' + track.title + ' 加入队列');
-    enqueue.disabled = !online;
-    enqueue.onclick = () => command('enqueue', track.id);
-    row.className = 'track-row';
-    row.append(button, enqueue);
-    list.append(row);
+function renderPlaylist(state) {
+  const playlists = state.playlists || [];
+  const key = JSON.stringify(playlists);
+  const select = el('playlist');
+  if (key !== shownPlaylists) {
+    shownPlaylists = key;
+    select.replaceChildren(...playlists.map(list => new Option(list.name, list.id)));
   }
+  select.value = state.playlist || '';
+  select.disabled = !online || playlists.length === 0;
+  const byId = new Map(tracks.map(track => [track.id, track.title]));
+  const ids = playlists.length ? state.queue || [] : [];
+  const queue = ids.map(id => ({id, title: byId.get(id), current: id === state.id}));
+  const queueKey = JSON.stringify([online, queue]);
+  el('track-count').textContent = ids.length + ' 首';
+  el('queue-empty').hidden = ids.length > 0;
+  el('queue-empty').textContent = !online ? '等待安卓播放机上线。' : playlists.length ?
+    '在安卓播放器上为当前歌单添加曲目。' : '请更新安卓播放器以同步歌单。';
+  if (queueKey !== shownQueue) {
+    shownQueue = queueKey;
+    el('queue').replaceChildren(...queue.map(track => {
+      const row = document.createElement('li');
+      const button = document.createElement('button');
+      button.textContent = track.title || '曲目暂不可用';
+      button.disabled = !online || !track.title;
+      if (track.current) button.setAttribute('aria-current', 'true');
+      button.onclick = () => command('track', track.id);
+      row.append(button);
+      return row;
+    }));
+  }
+  const modes = {OFF:'顺序播放', ALL:'列表循环', ONE:'单曲循环'};
+  el('repeat').textContent = modes[state.repeat] || '循环模式';
+  el('repeat').dataset.active = String(state.repeat === 'ALL' || state.repeat === 'ONE');
 }
 async function poll() {
   if (polling || el('player').hidden) return;
@@ -67,23 +80,12 @@ async function poll() {
       online = connected;
       tracks = library;
       catalogVersion = version;
-      renderTracks();
     }
-    const queue = (state.queue || []).map(id => tracks.find(t => t.id === id)?.title || '未知曲目');
-    el('queue-empty').hidden = queue.length > 0;
-    const queueKey = JSON.stringify(queue);
-    if (queueKey !== shownQueue) {
-      shownQueue = queueKey;
-      el('queue').replaceChildren(...queue.map(title => {
-        const row = document.createElement('li');
-        row.textContent = title;
-        return row;
-      }));
-    }
+    renderPlaylist(state);
     el('online').textContent = online ? (state.playing ? '● 播放中' : '● 待命中') : '○ 离线';
     el('online').dataset.online = String(online);
     el('track').textContent = tracks.find(t => t.id === state.id)?.title || '等待点歌';
-    for (const button of document.querySelectorAll('[data-action]')) button.disabled = !online;
+    for (const button of document.querySelectorAll('[data-action]')) button.disabled = !online || !state.playlist;
     for (const id of ['seek','volume']) el(id).disabled = !online;
     if (document.activeElement !== el('seek')) {
       el('seek').max = state.duration;
@@ -138,7 +140,7 @@ el('revoke').onclick = async () => {
   try { await api('revoke', {}); el('code').hidden = true; el('code').value = ''; notice('已解绑'); poll(); }
   catch (error) { notice(error.message); }
 };
-el('search').oninput = renderTracks;
+el('playlist').onchange = event => command('selectPlaylist', event.target.value);
 el('seek').onchange = event => command('seek','',Number(event.target.value));
 el('volume').onchange = event => command('volume','',Number(event.target.value));
 for (const button of document.querySelectorAll('[data-action]')) button.onclick = () => command(button.dataset.action);

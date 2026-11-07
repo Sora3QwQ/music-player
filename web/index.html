@@ -34,24 +34,22 @@
         <button data-action="pause" aria-label="暂停" title="暂停">Ⅱ</button>
         <button data-action="next" aria-label="下一首" title="下一首">⏭</button>
       </div>
+      <button id="repeat" class="repeat" data-action="repeat">循环模式</button>
       <label class="volume">音量 <input id="volume" type="range" min="0" max="100" value="100"></label>
     </section>
-    <section class="library panel">
-      <div class="row spread"><div><p class="eyebrow">LIBRARY</p><h2>本地曲库</h2></div><span id="track-count" class="muted"></span></div>
-      <input id="search" type="search" placeholder="搜索歌曲" aria-label="搜索歌曲">
-      <p id="library-empty" class="muted" hidden></p>
-      <ul id="tracks"></ul>
-    </section>
     <section class="queue panel">
-      <div class="row spread"><div><p class="eyebrow">UP NEXT</p><h2>接下来播放</h2></div><button id="clear-queue" data-action="clearQueue">清空队列</button></div>
-      <p id="queue-empty" class="muted">队列为空。可以从曲库加入歌曲。</p>
+      <div class="row spread"><div><p class="eyebrow">PLAYLIST</p><h2>当前歌单</h2></div><span id="track-count" class="muted"></span></div>
+      <label class="playlist-label" for="playlist">选择歌单</label>
+      <select id="playlist" disabled></select>
+      <p id="queue-empty" class="muted">在安卓播放器上创建歌单并添加曲目。</p>
       <ol id="queue"></ol>
     </section>
-    <section class="device panel">
-      <div class="row spread"><div><p class="eyebrow">DEVICE</p><h2>设备管理</h2></div><button id="logout">退出登录</button></div>
+    <details id="settings" class="device panel">
+      <summary>设置</summary>
+      <div class="row spread device-actions"><h2>设备管理</h2><button id="logout">退出登录</button></div>
       <div class="row device-actions"><button id="pair">生成配对码</button><button id="revoke">解绑设备</button></div>
       <input id="code" readonly hidden aria-label="配对码">
-    </section>
+    </details>
   </div>
 </main>
 </body>
