@@ -24,7 +24,9 @@ VPS 的持久卷保存曲库索引和设备凭据摘要。重启容器后需重�
 
 ## 构建和校验
 
-GitHub Actions 在推送和 PR 上检查 Go、网页脚本以及安卓 Lint，编译 APK 和 Docker。主分支构建通过后推送镜像到 GHCR，并按提交哈希打标签。Actions 运行页可下载测试 APK。测试 APK 的签名可能随构建机器变化，覆盖安装需使用同一签名。长期自用可通过仓库 Actions Secrets 配置 APK_KEYSTORE_BASE64、APK_STORE_PASSWORD、APK_KEY_ALIAS 和 APK_KEY_PASSWORD 构建稳定签名的发布 APK。保管好签名密钥。
+GitHub Actions 在推送和 PR 上检查 Go、网页脚本以及安卓 Lint，并编译 APK。主分支构建通过后把网页管理端镜像推送到 GHCR。推送 v 开头的版本标签后，工作流会把 remote-music.apk 发布到 [GitHub Releases](https://github.com/Sora3QwQ/music-player/releases)，可直接下载并安装。
+
+默认 APK 使用 CI 调试密钥签名，覆盖安装需要相同签名。长期自用可通过仓库 Actions Secrets 配置 APK_KEYSTORE_BASE64、APK_STORE_PASSWORD、APK_KEY_ALIAS 和 APK_KEY_PASSWORD，让后续标签构建使用稳定的发布签名。保管好签名密钥。
 
 本地服务测试运行 go test ./...。安卓构建使用 JDK 17、Gradle 8.11.1 和 Android SDK 35，命令为 gradle -p android lintDebug assembleDebug。该仓库的自动化测试模拟设备协议，熄屏和 Wi-Fi 恢复以真机结果为准。
 
